@@ -7,22 +7,32 @@ import torch.optim as optim
 from torchvision import datasets, transforms
 
 class Net(nn.Module):
-    def __init__(self):
+    def __init__(self, disable_drop_out = False, drop_out=0.5):
         super(Net, self).__init__()
+        #dropout settings
+        self.disable_drop_out = disable_drop_out
+        self.drop_out = drop_out
+        
         self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
         self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
-        self.conv2_drop = nn.Dropout2d()
+        if not disable_drop_out:
+            self.conv2_drop = nn.Dropout2d(p=drop_out)
         self.fc1 = nn.Linear(320, 50)
         self.fc2 = nn.Linear(50, 10)
+        
 
     def forward(self, x):
         x = F.sigmoid(F.max_pool2d(self.conv1(x), 2))
         x = F.sigmoid(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
         x = x.view(-1, 320)
         x = F.sigmoid(self.fc1(x))
-        x = F.dropout(x, training=self.training)
+        
+        if not self.disable_drop_out:
+            x = F.dropout(x, p = self.drop_out, training=self.training)
         x = self.fc2(x)
         return F.log_softmax(x, dim=1)
+
+
 
 def train(args, model, device, train_loader, optimizer, epoch):
     model.train()
@@ -38,7 +48,7 @@ def train(args, model, device, train_loader, optimizer, epoch):
                 epoch, batch_idx * len(data), len(train_loader.dataset),
                 100. * batch_idx / len(train_loader), loss.item()))
 
-def test(args, model, device, test_loader):
+def test(args, model, device, test_loader, is_train = False):
     model.eval()
     test_loss = 0
     correct = 0
@@ -51,9 +61,10 @@ def test(args, model, device, test_loader):
             correct += pred.eq(target.view_as(pred)).sum().item()
 
     test_loss /= len(test_loader.dataset)
-    print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
-        test_loss, correct, len(test_loader.dataset),
-        100. * correct / len(test_loader.dataset)))
+    test_accuracy = '{:.0f}'.format(100. * correct / len(test_loader.dataset))
+    data_set_used = 'Training' if is_train else 'Test'
+    print('\n{} set: Average loss: {:.4f}, Accuracy: {}/{} ({}%)\n'.format(data_set_used,
+        test_loss, correct, len(test_loader.dataset), test_accuracy))
 
 def main():
     # Training settings
@@ -74,6 +85,11 @@ def main():
                         help='random seed (default: 1)')
     parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                         help='how many batches to wait before logging training status')
+    #Dropout settings
+    parser.add_argument('--disable-dropout', type=bool, default=False, metavar='IsP',
+                        help='Enable/Disable Dropout Probability')
+    parser.add_argument('--dropout', type=float, default=0.5, metavar='P',
+                        help='Dropout Probability')
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -96,12 +112,16 @@ def main():
                        ])),
         batch_size=args.test_batch_size, shuffle=True, **kwargs)
 
-
-    model = Net().to(device)
+    drop_out = args.dropout
+    is_drop_out = args.disable_dropout
+    model = Net(is_drop_out, drop_out).to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
 
     for epoch in range(1, args.epochs + 1):
         train(args, model, device, train_loader, optimizer, epoch)
+        # training accuracy
+        test(args, model, device, train_loader, True)
+        # test accuracy
         test(args, model, device, test_loader)
 
 
